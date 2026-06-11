@@ -13,8 +13,4 @@ trap cleanup EXIT INT TERM
 cp "$repo_root/PKGBUILD" "$build_dir/"
 cd "$build_dir"
 
-if command -v yay >/dev/null 2>&1; then
-  yay -Bi .
-else
-  makepkg -si
-fi
+makepkg -si

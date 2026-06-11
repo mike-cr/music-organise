@@ -24,8 +24,7 @@ without building inside the repo:
 scripts/install-arch-package.sh
 ```
 
-The script copies `PKGBUILD` into a temporary directory and runs `yay -Bi .` if
-`yay` is installed, otherwise `makepkg -si`.
+The script copies `PKGBUILD` into a temporary directory and runs `makepkg -si`.
 
 ## Usage
 
