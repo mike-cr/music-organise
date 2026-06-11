@@ -16,6 +16,7 @@ from music_organise.core import (
     parse_playlist_location,
     parse_year,
     plan_moves,
+    raw_mp3_date_from_mapping,
     should_remove_disc_tag,
     tags_from_mapping,
     update_xspf_playlists,
@@ -76,6 +77,27 @@ def test_tags_from_mapping_preserves_flac_extension(tmp_path: Path):
         year="2020",
         ext=".flac",
     )
+
+
+def test_tags_from_mapping_reads_common_date_aliases(tmp_path: Path):
+    source = tmp_path / "track.flac"
+
+    tags = tags_from_mapping(
+        source,
+        {
+            "artist": ["Artist"],
+            "album": ["Album"],
+            "title": ["Title"],
+            "tracknumber": ["1"],
+            "releasedate": ["2006-09-04"],
+        },
+    )
+
+    assert tags.year == "2006"
+
+
+def test_raw_mp3_date_from_mapping_reads_release_time_frame():
+    assert raw_mp3_date_from_mapping({"TDRL": "2003"}) == "2003"
 
 
 def test_discover_audio_files_finds_mp3_and_flac(tmp_path: Path):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping
 from urllib.parse import quote, unquote, urlparse
@@ -16,6 +16,8 @@ COVER_ART_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif"
 
 _BAD_FILENAME_CHARS = re.compile(r'[<>:"\\|?*\x00-\x1f]')
 _MULTI_SPACE = re.compile(r"\s+")
+DATE_TAG_KEYS = ("date", "originaldate", "year", "originalyear", "releasedate", "releaseyear")
+RAW_MP3_DATE_FRAME_KEYS = ("TDRC", "TDRL", "TYER", "TDOR")
 
 
 @dataclass(frozen=True)
@@ -77,7 +79,14 @@ def read_mp3_tags(path: Path) -> TrackTags:
     except Exception as exc:
         raise RuntimeError(f"could not read MP3 tags from {path}: {exc}") from exc
 
-    return tags_from_mapping(path, audio)
+    tags = tags_from_mapping(path, audio)
+    if tags.year:
+        return tags
+
+    raw_date = read_mp3_raw_date(path)
+    if raw_date:
+        return replace(tags, year=parse_year(raw_date))
+    return tags
 
 
 def read_flac_tags(path: Path) -> TrackTags:
@@ -115,7 +124,7 @@ def tags_from_mapping(path: Path, audio: Mapping[str, list[str]]) -> TrackTags:
         title=title,
         track=parse_number(first("tracknumber")),
         disc=parse_disc_number(first("discnumber")),
-        year=parse_year(first("date", "originaldate")),
+        year=parse_year(first(*DATE_TAG_KEYS)),
         genre=first("genre"),
         ext=path.suffix.lower() or ".mp3",
     )
@@ -146,6 +155,31 @@ def parse_year(value: str) -> str:
         return ""
     match = re.match(r"\s*(\d{4})", value)
     return match.group(1) if match else value.strip()
+
+
+def read_mp3_raw_date(path: Path) -> str:
+    try:
+        from mutagen import File
+    except ImportError as exc:
+        raise RuntimeError(
+            "mutagen is required to read MP3 tags. Install with: python3 -m pip install -e ."
+        ) from exc
+
+    audio = File(path)
+    if audio is None:
+        return ""
+    return raw_mp3_date_from_mapping(audio)
+
+
+def raw_mp3_date_from_mapping(audio: Mapping[str, object]) -> str:
+    for key in RAW_MP3_DATE_FRAME_KEYS:
+        value = audio.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
 
 
 def build_destination(destination_root: Path, source: Path, tags: TrackTags, format_string: str) -> Path:
