@@ -38,6 +38,12 @@ class MovePlan:
 
 
 @dataclass(frozen=True)
+class TrackInfo:
+    source: Path
+    tags: TrackTags
+
+
+@dataclass(frozen=True)
 class PlaylistUpdate:
     source: Path
     destination: Path
@@ -108,7 +114,7 @@ def tags_from_mapping(path: Path, audio: Mapping[str, list[str]]) -> TrackTags:
         album=first("album", default="Unknown Album"),
         title=title,
         track=parse_number(first("tracknumber")),
-        disc=parse_number(first("discnumber")),
+        disc=parse_disc_number(first("discnumber")),
         year=parse_year(first("date", "originaldate")),
         genre=first("genre"),
         ext=path.suffix.lower() or ".mp3",
@@ -120,6 +126,19 @@ def parse_number(value: str) -> int:
         return 0
     match = re.match(r"\s*(\d+)", value)
     return int(match.group(1)) if match else 0
+
+
+def parse_disc_number(value: str) -> int:
+    if not value:
+        return 0
+    match = re.match(r"\s*(\d+)(?:\s*/\s*(\d+))?", value)
+    if not match:
+        return 0
+    disc = int(match.group(1))
+    total = int(match.group(2)) if match.group(2) else 0
+    if disc == 1 and total == 1:
+        return 0
+    return disc
 
 
 def parse_year(value: str) -> str:
@@ -199,9 +218,12 @@ def plan_moves(source_root: Path, destination_root: Path, format_string: str) ->
     track_plans: list[MovePlan] = []
     destination_dirs_by_source_dir: dict[Path, set[Path]] = {}
     reserved_destinations: set[Path] = set()
+    tracks = [TrackInfo(source=source, tags=read_audio_tags(source)) for source in discover_audio_files(source_root)]
+    validate_tracks(tracks)
 
-    for source in discover_audio_files(source_root):
-        tags = read_audio_tags(source)
+    for track in tracks:
+        source = track.source
+        tags = track.tags
         destination = build_destination(destination_root, source, tags, format_string)
         destination = unique_destination(destination, source, reserved_destinations)
         reserved_destinations.add(destination.resolve())
@@ -211,6 +233,50 @@ def plan_moves(source_root: Path, destination_root: Path, format_string: str) ->
 
     cover_plans = plan_cover_art_moves(destination_dirs_by_source_dir, reserved_destinations)
     return track_plans + cover_plans
+
+
+def validate_tracks(tracks: list[TrackInfo]) -> None:
+    tags_by_source_dir: dict[Path, list[TrackInfo]] = {}
+    for track in tracks:
+        tags_by_source_dir.setdefault(track.source.parent, []).append(track)
+
+    for source_dir, folder_tracks in tags_by_source_dir.items():
+        missing_date_tracks = [track.source.name for track in folder_tracks if not track.tags.year]
+        if missing_date_tracks:
+            raise ValueError(
+                f"tracks in {source_dir} have missing date tags: {', '.join(sorted(missing_date_tracks))}"
+            )
+        artists = {track.tags.artist for track in folder_tracks}
+        albums = {track.tags.album for track in folder_tracks}
+        if len(artists) > 1:
+            raise ValueError(f"tracks in {source_dir} have different artists: {', '.join(sorted(artists))}")
+        if len(albums) > 1:
+            raise ValueError(f"tracks in {source_dir} have different albums: {', '.join(sorted(albums))}")
+        validate_folder_track_numbers(source_dir, folder_tracks)
+
+
+def validate_folder_track_numbers(source_dir: Path, tracks: list[TrackInfo]) -> None:
+    missing_track_numbers = [track.source.name for track in tracks if track.tags.track <= 0]
+    if missing_track_numbers:
+        raise ValueError(
+            f"tracks in {source_dir} have missing track numbers: {', '.join(sorted(missing_track_numbers))}"
+        )
+
+    tracks_by_disc: dict[int, list[TrackInfo]] = {}
+    for track in tracks:
+        tracks_by_disc.setdefault(track.tags.disc, []).append(track)
+
+    allow_later_start = all(track.tags.disc > 1 for track in tracks)
+    for disc, disc_tracks in sorted(tracks_by_disc.items()):
+        actual = sorted(track.tags.track for track in disc_tracks)
+        start = actual[0] if allow_later_start else 1
+        expected = list(range(start, start + len(disc_tracks)))
+        if actual != expected:
+            disc_label = f"disc {disc}" if disc > 0 else "tracks"
+            raise ValueError(
+                f"tracks in {source_dir} have non-sequential track numbers for {disc_label}: "
+                f"expected {expected}, found {actual}"
+            )
 
 
 def plan_cover_art_moves(
@@ -234,14 +300,86 @@ def plan_cover_art_moves(
 
 def apply_moves(plans: list[MovePlan], move: bool = False) -> dict[Path, Path]:
     path_map: dict[Path, Path] = {}
+    plans_by_source: dict[Path, list[MovePlan]] = {}
     for plan in plans:
-        plan.destination.parent.mkdir(parents=True, exist_ok=True)
-        if move:
+        plans_by_source.setdefault(plan.source.resolve(), []).append(plan)
+
+    for source, source_plans in plans_by_source.items():
+        if move and len(source_plans) == 1:
+            plan = source_plans[0]
+            plan.destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(plan.source), str(plan.destination))
-        else:
+            path_map[source] = plan.destination.resolve()
+            continue
+
+        for plan in source_plans:
+            plan.destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(plan.source, plan.destination)
-        path_map[plan.source.resolve()] = plan.destination.resolve()
+            path_map[source] = plan.destination.resolve()
+        if move:
+            source_path = Path(source)
+            if source_path.exists():
+                source_path.unlink()
     return path_map
+
+
+def normalize_single_disc_tags(root: Path) -> int:
+    changed = 0
+    for path in discover_audio_files(root):
+        if normalize_single_disc_tag(path):
+            changed += 1
+    return changed
+
+
+def normalize_single_disc_tag(path: Path) -> bool:
+    if path.suffix.lower() not in AUDIO_EXTENSIONS:
+        return False
+    if path.suffix.lower() == ".mp3":
+        return normalize_mp3_single_disc_tag(path)
+    elif path.suffix.lower() == ".flac":
+        return normalize_flac_single_disc_tag(path)
+    return False
+
+
+def should_remove_disc_tag(value: str) -> bool:
+    return bool(re.match(r"\s*0*1\s*/\s*0*1\s*$", value))
+
+
+def normalize_mp3_single_disc_tag(path: Path) -> bool:
+    try:
+        from mutagen.easyid3 import EasyID3
+    except ImportError as exc:
+        raise RuntimeError(
+            "mutagen is required to update MP3 tags. Install with: python3 -m pip install -e ."
+        ) from exc
+
+    audio = EasyID3(path)
+    values = audio.get("discnumber")
+    if values and should_remove_disc_tag(values[0]):
+        del audio["discnumber"]
+        audio.save()
+        return True
+    return False
+
+
+def normalize_flac_single_disc_tag(path: Path) -> bool:
+    try:
+        from mutagen.flac import FLAC
+    except ImportError as exc:
+        raise RuntimeError(
+            "mutagen is required to update FLAC tags. Install with: python3 -m pip install -e ."
+        ) from exc
+
+    audio = FLAC(path)
+    changed = False
+    for key in ("discnumber", "disc"):
+        values = audio.get(key)
+        if values and should_remove_disc_tag(values[0]):
+            del audio[key]
+            changed = True
+    if changed:
+        audio.save()
+    return changed
 
 
 def cleanup_empty_dirs(root: Path) -> int:

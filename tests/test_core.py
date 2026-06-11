@@ -10,10 +10,13 @@ from music_organise.core import (
     cleanup_empty_dirs,
     discover_audio_files,
     format_playlist_location,
+    normalize_single_disc_tags,
+    parse_disc_number,
     parse_number,
     parse_playlist_location,
     parse_year,
     plan_moves,
+    should_remove_disc_tag,
     tags_from_mapping,
     update_xspf_playlists,
     update_xspf_playlist,
@@ -24,6 +27,21 @@ def test_parse_number_handles_track_totals():
     assert parse_number("03/12") == 3
     assert parse_number("7") == 7
     assert parse_number("") == 0
+
+
+def test_parse_disc_number_treats_one_of_one_as_absent():
+    assert parse_disc_number("1/1") == 0
+    assert parse_disc_number("01 / 01") == 0
+    assert parse_disc_number("1/2") == 1
+    assert parse_disc_number("2/2") == 2
+    assert parse_disc_number("") == 0
+
+
+def test_should_remove_disc_tag_only_matches_one_of_one():
+    assert should_remove_disc_tag("1/1") is True
+    assert should_remove_disc_tag(" 01 / 01 ") is True
+    assert should_remove_disc_tag("1") is False
+    assert should_remove_disc_tag("1/2") is False
 
 
 def test_parse_year_uses_leading_four_digit_year():
@@ -319,7 +337,7 @@ def test_plan_moves_moves_cover_art_with_tracks(tmp_path: Path, monkeypatch):
 
     def fake_read_tags(path: Path) -> TrackTags:
         assert path == track
-        return TrackTags(artist="Artist", album="Album", title="Title", track=1, ext=".mp3")
+        return TrackTags(artist="Artist", year="2024", album="Album", title="Title", track=1, ext=".mp3")
 
     monkeypatch.setattr("music_organise.core.read_audio_tags", fake_read_tags)
 
@@ -344,24 +362,56 @@ def test_plan_moves_copies_cover_art_to_each_split_destination_folder(tmp_path: 
     cover.write_bytes(b"")
 
     def fake_read_tags(path: Path) -> TrackTags:
-        album = "One" if path == track_one else "Two"
-        return TrackTags(artist="Artist", album=album, title=path.stem, track=1, ext=".mp3")
+        disc = 1 if path == track_one else 2
+        return TrackTags(
+            artist="Artist",
+            year="2024",
+            album="Album",
+            disc=disc,
+            title=path.stem,
+            track=1,
+            ext=".mp3",
+        )
 
     monkeypatch.setattr("music_organise.core.read_audio_tags", fake_read_tags)
 
-    moves = plan_moves(source_root, destination_root, "{artist}/{album}/{track:02d} - {title}{ext}")
+    moves = plan_moves(source_root, destination_root, DEFAULT_FORMAT)
 
     assert moves == [
-        MovePlan(track_one, destination_root / "Artist" / "One" / "01 - one.mp3"),
-        MovePlan(track_two, destination_root / "Artist" / "Two" / "01 - two.mp3"),
-        MovePlan(cover, destination_root / "Artist" / "One" / "cover.jpg"),
-        MovePlan(cover, destination_root / "Artist" / "Two" / "cover.jpg"),
+        MovePlan(track_one, destination_root / "Artist" / "2024 - Album (Disc 1)" / "01 - one.mp3"),
+        MovePlan(track_two, destination_root / "Artist" / "2024 - Album (Disc 2)" / "01 - two.mp3"),
+        MovePlan(cover, destination_root / "Artist" / "2024 - Album (Disc 1)" / "cover.jpg"),
+        MovePlan(cover, destination_root / "Artist" / "2024 - Album (Disc 2)" / "cover.jpg"),
     ]
 
 
-def test_plan_moves_uses_unique_destinations_for_duplicate_formatted_tracks(
-    tmp_path: Path, monkeypatch
-):
+def test_plan_moves_refuses_folder_when_any_track_has_missing_date(tmp_path: Path, monkeypatch):
+    source_root = tmp_path / "incoming"
+    destination_root = tmp_path / "library"
+    source_root.mkdir()
+    missing_date = source_root / "missing.mp3"
+    dated = source_root / "dated.mp3"
+    missing_date.write_bytes(b"")
+    dated.write_bytes(b"")
+
+    def fake_read_tags(path: Path) -> TrackTags:
+        year = "" if path == missing_date else "2024"
+        return TrackTags(artist="Artist", year=year, album="Album", title=path.stem, track=1, ext=".mp3")
+
+    monkeypatch.setattr("music_organise.core.read_audio_tags", fake_read_tags)
+
+    try:
+        plan_moves(source_root, destination_root, DEFAULT_FORMAT)
+    except ValueError as exc:
+        message = str(exc)
+        assert f"tracks in {source_root}" in message
+        assert "missing date tags" in message
+        assert "missing.mp3" in message
+    else:
+        raise AssertionError("expected missing date validation error")
+
+
+def test_plan_moves_refuses_mixed_artists_in_same_source_folder(tmp_path: Path, monkeypatch):
     source_root = tmp_path / "incoming"
     destination_root = tmp_path / "library"
     source_root.mkdir()
@@ -371,7 +421,236 @@ def test_plan_moves_uses_unique_destinations_for_duplicate_formatted_tracks(
     track_two.write_bytes(b"")
 
     def fake_read_tags(path: Path) -> TrackTags:
-        return TrackTags(artist="Artist", album="Album", title="Same", track=1, ext=".mp3")
+        artist = "One" if path == track_one else "Two"
+        return TrackTags(artist=artist, year="2024", album="Album", title=path.stem, track=1, ext=".mp3")
+
+    monkeypatch.setattr("music_organise.core.read_audio_tags", fake_read_tags)
+
+    try:
+        plan_moves(source_root, destination_root, DEFAULT_FORMAT)
+    except ValueError as exc:
+        assert "different artists" in str(exc)
+    else:
+        raise AssertionError("expected mixed artist validation error")
+
+
+def test_plan_moves_refuses_mixed_albums_in_same_source_folder(tmp_path: Path, monkeypatch):
+    source_root = tmp_path / "incoming"
+    destination_root = tmp_path / "library"
+    source_root.mkdir()
+    track_one = source_root / "one.mp3"
+    track_two = source_root / "two.mp3"
+    track_one.write_bytes(b"")
+    track_two.write_bytes(b"")
+
+    def fake_read_tags(path: Path) -> TrackTags:
+        album = "One" if path == track_one else "Two"
+        return TrackTags(artist="Artist", year="2024", album=album, title=path.stem, track=1, ext=".mp3")
+
+    monkeypatch.setattr("music_organise.core.read_audio_tags", fake_read_tags)
+
+    try:
+        plan_moves(source_root, destination_root, DEFAULT_FORMAT)
+    except ValueError as exc:
+        assert "different albums" in str(exc)
+    else:
+        raise AssertionError("expected mixed album validation error")
+
+
+def test_plan_moves_refuses_folder_when_any_track_has_missing_track_number(
+    tmp_path: Path, monkeypatch
+):
+    source_root = tmp_path / "incoming"
+    destination_root = tmp_path / "library"
+    source_root.mkdir()
+    missing_track = source_root / "missing.mp3"
+    numbered = source_root / "numbered.mp3"
+    missing_track.write_bytes(b"")
+    numbered.write_bytes(b"")
+
+    def fake_read_tags(path: Path) -> TrackTags:
+        track = 0 if path == missing_track else 1
+        return TrackTags(artist="Artist", year="2024", album="Album", title=path.stem, track=track, ext=".mp3")
+
+    monkeypatch.setattr("music_organise.core.read_audio_tags", fake_read_tags)
+
+    try:
+        plan_moves(source_root, destination_root, DEFAULT_FORMAT)
+    except ValueError as exc:
+        message = str(exc)
+        assert f"tracks in {source_root}" in message
+        assert "missing track numbers" in message
+        assert "missing.mp3" in message
+    else:
+        raise AssertionError("expected missing track number validation error")
+
+
+def test_plan_moves_refuses_non_sequential_track_numbers(tmp_path: Path, monkeypatch):
+    source_root = tmp_path / "incoming"
+    destination_root = tmp_path / "library"
+    source_root.mkdir()
+    track_one = source_root / "one.mp3"
+    track_three = source_root / "three.mp3"
+    track_one.write_bytes(b"")
+    track_three.write_bytes(b"")
+
+    def fake_read_tags(path: Path) -> TrackTags:
+        track = 1 if path == track_one else 3
+        return TrackTags(artist="Artist", year="2024", album="Album", title=path.stem, track=track, ext=".mp3")
+
+    monkeypatch.setattr("music_organise.core.read_audio_tags", fake_read_tags)
+
+    try:
+        plan_moves(source_root, destination_root, DEFAULT_FORMAT)
+    except ValueError as exc:
+        message = str(exc)
+        assert "non-sequential track numbers" in message
+        assert "expected [1, 2]" in message
+        assert "found [1, 3]" in message
+    else:
+        raise AssertionError("expected non-sequential track number validation error")
+
+
+def test_plan_moves_refuses_duplicate_track_numbers(tmp_path: Path, monkeypatch):
+    source_root = tmp_path / "incoming"
+    destination_root = tmp_path / "library"
+    source_root.mkdir()
+    track_one = source_root / "one.mp3"
+    track_two = source_root / "two.mp3"
+    track_one.write_bytes(b"")
+    track_two.write_bytes(b"")
+
+    monkeypatch.setattr(
+        "music_organise.core.read_audio_tags",
+        lambda path: TrackTags(artist="Artist", year="2024", album="Album", title=path.stem, track=1, ext=".mp3"),
+    )
+
+    try:
+        plan_moves(source_root, destination_root, DEFAULT_FORMAT)
+    except ValueError as exc:
+        message = str(exc)
+        assert "non-sequential track numbers" in message
+        assert "found [1, 1]" in message
+    else:
+        raise AssertionError("expected duplicate track number validation error")
+
+
+def test_plan_moves_allows_disc_greater_than_one_folder_to_start_later(
+    tmp_path: Path, monkeypatch
+):
+    source_root = tmp_path / "incoming"
+    destination_root = tmp_path / "library"
+    source_root.mkdir()
+    track_ten = source_root / "ten.mp3"
+    track_eleven = source_root / "eleven.mp3"
+    track_ten.write_bytes(b"")
+    track_eleven.write_bytes(b"")
+
+    def fake_read_tags(path: Path) -> TrackTags:
+        track = 10 if path == track_ten else 11
+        return TrackTags(
+            artist="Artist",
+            year="2024",
+            album="Album",
+            disc=2,
+            title=path.stem,
+            track=track,
+            ext=".mp3",
+        )
+
+    monkeypatch.setattr("music_organise.core.read_audio_tags", fake_read_tags)
+
+    moves = plan_moves(source_root, destination_root, DEFAULT_FORMAT)
+
+    assert moves == [
+        MovePlan(track_eleven, destination_root / "Artist" / "2024 - Album (Disc 2)" / "11 - eleven.mp3"),
+        MovePlan(track_ten, destination_root / "Artist" / "2024 - Album (Disc 2)" / "10 - ten.mp3"),
+    ]
+
+
+def test_plan_moves_refuses_disc_greater_than_one_folder_with_track_gap(
+    tmp_path: Path, monkeypatch
+):
+    source_root = tmp_path / "incoming"
+    destination_root = tmp_path / "library"
+    source_root.mkdir()
+    track_ten = source_root / "ten.mp3"
+    track_twelve = source_root / "twelve.mp3"
+    track_ten.write_bytes(b"")
+    track_twelve.write_bytes(b"")
+
+    def fake_read_tags(path: Path) -> TrackTags:
+        track = 10 if path == track_ten else 12
+        return TrackTags(
+            artist="Artist",
+            year="2024",
+            album="Album",
+            disc=2,
+            title=path.stem,
+            track=track,
+            ext=".mp3",
+        )
+
+    monkeypatch.setattr("music_organise.core.read_audio_tags", fake_read_tags)
+
+    try:
+        plan_moves(source_root, destination_root, DEFAULT_FORMAT)
+    except ValueError as exc:
+        message = str(exc)
+        assert "non-sequential track numbers" in message
+        assert "expected [10, 11]" in message
+        assert "found [10, 12]" in message
+    else:
+        raise AssertionError("expected non-sequential track number validation error")
+
+
+def test_plan_moves_allows_track_numbers_to_restart_on_each_disc(tmp_path: Path, monkeypatch):
+    source_root = tmp_path / "incoming"
+    destination_root = tmp_path / "library"
+    source_root.mkdir()
+    disc_one = source_root / "disc-one.mp3"
+    disc_two = source_root / "disc-two.mp3"
+    disc_one.write_bytes(b"")
+    disc_two.write_bytes(b"")
+
+    def fake_read_tags(path: Path) -> TrackTags:
+        disc = 1 if path == disc_one else 2
+        return TrackTags(
+            artist="Artist",
+            year="2024",
+            album="Album",
+            disc=disc,
+            title=path.stem,
+            track=1,
+            ext=".mp3",
+        )
+
+    monkeypatch.setattr("music_organise.core.read_audio_tags", fake_read_tags)
+
+    moves = plan_moves(source_root, destination_root, DEFAULT_FORMAT)
+
+    assert moves == [
+        MovePlan(disc_one, destination_root / "Artist" / "2024 - Album (Disc 1)" / "01 - disc-one.mp3"),
+        MovePlan(disc_two, destination_root / "Artist" / "2024 - Album (Disc 2)" / "01 - disc-two.mp3"),
+    ]
+
+
+def test_plan_moves_uses_unique_destinations_for_duplicate_formatted_tracks(
+    tmp_path: Path, monkeypatch
+):
+    source_root = tmp_path / "incoming"
+    destination_root = tmp_path / "library"
+    first_folder = source_root / "first"
+    second_folder = source_root / "second"
+    first_folder.mkdir(parents=True)
+    second_folder.mkdir(parents=True)
+    track_one = first_folder / "one.mp3"
+    track_two = second_folder / "two.mp3"
+    track_one.write_bytes(b"")
+    track_two.write_bytes(b"")
+
+    def fake_read_tags(path: Path) -> TrackTags:
+        return TrackTags(artist="Artist", year="2024", album="Album", title="Same", track=1, ext=".mp3")
 
     monkeypatch.setattr("music_organise.core.read_audio_tags", fake_read_tags)
 
@@ -434,6 +713,36 @@ def test_apply_moves_can_move_files_for_in_place_organisation(tmp_path: Path):
     assert not source.exists()
     assert destination.read_bytes() == b"audio"
     assert path_map == {source.resolve(): destination.resolve()}
+
+
+def test_apply_moves_copies_duplicate_source_then_removes_original_in_move_mode(tmp_path: Path):
+    source = tmp_path / "source" / "cover.jpg"
+    destination_one = tmp_path / "library" / "Disc 1" / "cover.jpg"
+    destination_two = tmp_path / "library" / "Disc 2" / "cover.jpg"
+    source.parent.mkdir()
+    source.write_bytes(b"image")
+
+    apply_moves(
+        [
+            MovePlan(source, destination_one),
+            MovePlan(source, destination_two),
+        ],
+        move=True,
+    )
+
+    assert not source.exists()
+    assert destination_one.read_bytes() == b"image"
+    assert destination_two.read_bytes() == b"image"
+
+
+def test_normalize_single_disc_tags_counts_changed_files(tmp_path: Path, monkeypatch):
+    track = tmp_path / "track.mp3"
+    track.write_bytes(b"")
+
+    monkeypatch.setattr("music_organise.core.discover_audio_files", lambda root: [track])
+    monkeypatch.setattr("music_organise.core.normalize_single_disc_tag", lambda path: path == track)
+
+    assert normalize_single_disc_tags(tmp_path) == 1
 
 
 def test_cleanup_empty_dirs_removes_only_empty_child_folders(tmp_path: Path):

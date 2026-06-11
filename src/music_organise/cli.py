@@ -8,6 +8,7 @@ from .core import (
     DEFAULT_FORMAT,
     apply_moves,
     cleanup_empty_dirs,
+    normalize_single_disc_tags,
     plan_moves,
     planned_path_map,
     update_xspf_playlists,
@@ -19,7 +20,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Organise MP3 and FLAC files by tags and update XSPF playlists."
     )
     parser.add_argument("source_dir", nargs="?", type=Path, help="Folder containing audio files to organise.")
-    parser.add_argument("destination_dir", nargs="?", type=Path, help="Folder to copy organised files into.")
+    parser.add_argument("destination_dir", nargs="?", type=Path, help="Folder to move organised files into.")
     parser.add_argument(
         "playlist_source_dir",
         nargs="?",
@@ -40,7 +41,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--apply",
         action="store_true",
-        help="Copy or move files and update playlists. Without this, only a dry run is printed.",
+        help="Move files and update playlists. Without this, only a dry run is printed.",
     )
     parser.add_argument(
         "--tui",
@@ -100,21 +101,24 @@ def run_organise(
     in_place_music = source_dir == destination_dir
 
     if moves:
-        print("File moves:" if in_place_music else "File copies:")
+        print("File moves:")
         for move in moves:
             print(f"  {move.source} -> {move.destination}")
     else:
-        print(f"No audio files need {'moving' if in_place_music else 'copying'}.")
+        print("No audio files need moving.")
 
     if apply:
         try:
-            path_map = apply_moves(moves, move=in_place_music)
+            normalized_tags = normalize_single_disc_tags(source_dir)
+            if normalized_tags:
+                print(f"Removed single-disc disc tags from {normalized_tags} file(s).")
+            path_map = apply_moves(moves, move=True)
             if in_place_music:
                 cleaned_dirs = cleanup_empty_dirs(source_dir)
                 if cleaned_dirs:
                     print(f"Removed {cleaned_dirs} empty folder(s).")
         except Exception as exc:
-            print(f"failed while {'moving' if in_place_music else 'copying'} files: {exc}", file=sys.stderr)
+            print(f"failed while moving files: {exc}", file=sys.stderr)
             return 1
 
     try:
@@ -136,7 +140,7 @@ def run_organise(
         print("No XSPF playlists found.")
 
     if not apply:
-        print("Dry run only. Re-run with --apply to copy or move files and update playlists.")
+        print("Dry run only. Re-run with --apply to move files and update playlists.")
 
     return 0
 

@@ -1,13 +1,13 @@
 # music-organise
 
-Copy MP3 and FLAC files from a source folder into a separate destination folder
-using their tags, then copy XSPF playlists into a separate destination folder
-with updated `<location>` entries. Source music and playlist files are left in
-place.
+Move MP3 and FLAC files from a source folder into a destination folder using
+their tags, then copy XSPF playlists into a destination folder with updated
+`<location>` entries. Source playlist files are left in place unless you choose
+to update playlists in place.
 
 If the music source and destination are the same folder, files are moved within
-that folder instead of copied. Empty folders are cleaned up only in that
-in-place mode.
+that folder and empty folders are cleaned up after apply mode. Empty folders are
+not cleaned up when the music source and destination are different.
 
 The command runs in dry-run mode unless `--apply` is supplied.
 
@@ -97,7 +97,16 @@ original playlist file. Updated relative paths are written relative to the
 copied playlist's new location. Set the playlist source and destination to the
 same folder to update playlists in place.
 
-Image files in the same folder as copied tracks are treated as cover art and
-copied into each destination folder produced by tracks from that source folder.
+The app refuses to process a source folder when any track in that folder is
+missing a date tag, or when tracks in that folder have different artists or
+albums. It also refuses folders where tracks are missing track numbers or where
+track numbers do not proceed sequentially for each disc. Track numbers must
+start at 1 unless every track in the source folder has a disc number greater
+than 1; in that case they may start later but must still be contiguous. If a
+track has `discnumber` set to `1/1`, apply mode removes that disc tag and treats
+it as no disc number.
+
+Image files in the same folder as organised tracks are treated as cover art and
+moved into each destination folder produced by tracks from that source folder.
 Supported cover art extensions are `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`,
 `.bmp`, `.tif`, and `.tiff`.
