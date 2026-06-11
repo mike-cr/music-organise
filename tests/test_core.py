@@ -264,12 +264,48 @@ def test_update_xspf_playlist_can_rewrite_in_place(tmp_path: Path):
     assert location.text == "../music/Artist/Album/01%20-%20New.mp3"
 
 
-def test_update_xspf_playlists_copies_nested_playlists_with_relative_paths(tmp_path: Path):
+def test_update_xspf_playlist_rewrites_absolute_locations_as_relative(tmp_path: Path):
+    music = tmp_path / "music"
+    playlists = tmp_path / "music" / "playlists"
+    music.mkdir()
+    playlists.mkdir()
+    old_path = music / "old.mp3"
+    new_path = music / "Artist" / "Album" / "01 - New.mp3"
+    old_path.write_bytes(b"")
+
+    playlist = playlists / "mix.xspf"
+    playlist.write_text(
+        f"""<?xml version="1.0" encoding="UTF-8"?>
+<playlist version="1" xmlns="http://xspf.org/ns/0/">
+  <trackList>
+    <track>
+      <location>{old_path}</location>
+    </track>
+  </trackList>
+</playlist>
+""",
+        encoding="utf-8",
+    )
+
+    changes = update_xspf_playlist(
+        playlist,
+        playlist,
+        {old_path.resolve(): new_path.resolve()},
+        apply=True,
+    )
+
+    assert changes == 1
+    tree = ET.parse(playlist)
+    location = tree.getroot().find(".//{http://xspf.org/ns/0/}location")
+    assert location is not None
+    assert location.text == "../Artist/Album/01%20-%20New.mp3"
+
+
+def test_update_xspf_playlists_updates_nested_playlists_in_place_with_relative_paths(tmp_path: Path):
     music_source = tmp_path / "source-music"
     music_destination = tmp_path / "library"
-    playlist_source = tmp_path / "source-playlists"
-    playlist_destination = tmp_path / "copied-playlists"
-    nested = playlist_source / "folders"
+    playlist_root = music_destination / "playlists"
+    nested = playlist_root / "folders"
     music_source.mkdir()
     music_destination.mkdir()
     nested.mkdir(parents=True)
@@ -283,7 +319,7 @@ def test_update_xspf_playlists_copies_nested_playlists_with_relative_paths(tmp_p
 <playlist version="1" xmlns="http://xspf.org/ns/0/">
   <trackList>
     <track>
-      <location>../../source-music/old.mp3</location>
+      <location>../../../source-music/old.mp3</location>
     </track>
   </trackList>
 </playlist>
@@ -292,59 +328,35 @@ def test_update_xspf_playlists_copies_nested_playlists_with_relative_paths(tmp_p
     )
 
     updates = update_xspf_playlists(
-        playlist_source,
-        playlist_destination,
+        playlist_root,
         {old_path.resolve(): new_path.resolve()},
         apply=True,
     )
 
-    copied_playlist = playlist_destination / "folders" / "mix.xspf"
-    assert updates[0].source == playlist
-    assert updates[0].destination == copied_playlist
-    assert updates[0].changes == 1
-    tree = ET.parse(copied_playlist)
-    location = tree.getroot().find(".//{http://xspf.org/ns/0/}location")
-    assert location is not None
-    assert location.text == "../../library/Artist/Album/01%20-%20New.mp3"
-
-
-def test_update_xspf_playlists_copies_unchanged_playlists(tmp_path: Path):
-    playlist_source = tmp_path / "source-playlists"
-    playlist_destination = tmp_path / "copied-playlists"
-    playlist_source.mkdir()
-    playlist = playlist_source / "unchanged.xspf"
-    content = """<?xml version="1.0" encoding="UTF-8"?>
-<playlist version="1" xmlns="http://xspf.org/ns/0/">
-  <trackList />
-</playlist>
-"""
-    playlist.write_text(content, encoding="utf-8")
-
-    updates = update_xspf_playlists(playlist_source, playlist_destination, {}, apply=True)
-
-    copied_playlist = playlist_destination / "unchanged.xspf"
-    assert updates[0].changes == 0
-    assert copied_playlist.read_text(encoding="utf-8") == content
-
-
-def test_update_xspf_playlists_allows_unchanged_in_place_playlists(tmp_path: Path):
-    playlist_source = tmp_path / "playlists"
-    playlist_source.mkdir()
-    playlist = playlist_source / "unchanged.xspf"
-    content = """<?xml version="1.0" encoding="UTF-8"?>
-<playlist version="1" xmlns="http://xspf.org/ns/0/">
-  <trackList />
-</playlist>
-"""
-    playlist.write_text(content, encoding="utf-8")
-
-    updates = update_xspf_playlists(playlist_source, playlist_source, {}, apply=True)
-
     assert updates[0].source == playlist
     assert updates[0].destination == playlist
+    assert updates[0].changes == 1
+    tree = ET.parse(playlist)
+    location = tree.getroot().find(".//{http://xspf.org/ns/0/}location")
+    assert location is not None
+    assert location.text == "../../Artist/Album/01%20-%20New.mp3"
+
+
+def test_update_xspf_playlists_leaves_unchanged_playlists_in_place(tmp_path: Path):
+    playlist_root = tmp_path / "playlists"
+    playlist_root.mkdir()
+    playlist = playlist_root / "unchanged.xspf"
+    content = """<?xml version="1.0" encoding="UTF-8"?>
+<playlist version="1" xmlns="http://xspf.org/ns/0/">
+  <trackList />
+</playlist>
+"""
+    playlist.write_text(content, encoding="utf-8")
+
+    updates = update_xspf_playlists(playlist_root, {}, apply=True)
+
     assert updates[0].changes == 0
     assert playlist.read_text(encoding="utf-8") == content
-
 
 
 def test_plan_moves_moves_cover_art_with_tracks(tmp_path: Path, monkeypatch):

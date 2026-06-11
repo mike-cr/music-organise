@@ -22,18 +22,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("source_dir", nargs="?", type=Path, help="Folder containing audio files to organise.")
     parser.add_argument("destination_dir", nargs="?", type=Path, help="Folder to move organised files into.")
     parser.add_argument(
-        "playlist_source_dir",
-        nargs="?",
-        type=Path,
-        help="Folder containing XSPF playlists to copy.",
-    )
-    parser.add_argument(
-        "playlist_destination_dir",
-        nargs="?",
-        type=Path,
-        help="Folder to copy updated XSPF playlists into.",
-    )
-    parser.add_argument(
         "--format",
         default=DEFAULT_FORMAT,
         help=f"Destination format relative to destination_dir. Default: {DEFAULT_FORMAT}",
@@ -54,38 +42,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def validate_paths(
     source_dir: Path,
     destination_dir: Path,
-    playlist_source_dir: Path,
-    playlist_destination_dir: Path,
 ) -> str | None:
+    playlist_dir = destination_dir / "playlists"
     if not source_dir.is_dir():
         return f"source directory does not exist: {source_dir}"
     if destination_dir.exists() and not destination_dir.is_dir():
         return f"destination path exists but is not a directory: {destination_dir}"
-    if not playlist_source_dir.is_dir():
-        return f"playlist source directory does not exist: {playlist_source_dir}"
-    if playlist_destination_dir.exists() and not playlist_destination_dir.is_dir():
-        return f"playlist destination path exists but is not a directory: {playlist_destination_dir}"
+    if not playlist_dir.is_dir():
+        return f"playlist directory does not exist: {playlist_dir}"
     return None
 
 
 def run_organise(
     source_dir: Path,
     destination_dir: Path,
-    playlist_source_dir: Path,
-    playlist_destination_dir: Path,
     format_string: str,
     apply: bool,
 ) -> int:
     source_dir = source_dir.expanduser().resolve()
     destination_dir = destination_dir.expanduser().resolve()
-    playlist_source_dir = playlist_source_dir.expanduser().resolve()
-    playlist_destination_dir = playlist_destination_dir.expanduser().resolve()
+    playlist_dir = destination_dir / "playlists"
 
     validation_error = validate_paths(
         source_dir,
         destination_dir,
-        playlist_source_dir,
-        playlist_destination_dir,
     )
     if validation_error:
         print(validation_error, file=sys.stderr)
@@ -123,8 +103,7 @@ def run_organise(
 
     try:
         playlist_updates = update_xspf_playlists(
-            playlist_source_dir,
-            playlist_destination_dir,
+            playlist_dir,
             path_map,
             apply=apply,
         )
@@ -150,8 +129,6 @@ def main(argv: list[str] | None = None) -> int:
     paths = [
         args.source_dir,
         args.destination_dir,
-        args.playlist_source_dir,
-        args.playlist_destination_dir,
     ]
 
     if args.tui or all(path is None for path in paths):
@@ -161,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if any(path is None for path in paths):
         print(
-            "source_dir, destination_dir, playlist_source_dir, and playlist_destination_dir are required",
+            "source_dir and destination_dir are required",
             file=sys.stderr,
         )
         return 2
@@ -169,8 +146,6 @@ def main(argv: list[str] | None = None) -> int:
     return run_organise(
         args.source_dir,
         args.destination_dir,
-        args.playlist_source_dir,
-        args.playlist_destination_dir,
         args.format,
         args.apply,
     )

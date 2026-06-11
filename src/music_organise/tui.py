@@ -27,13 +27,12 @@ def run_tui() -> int:
 
     print("music-organise TUI")
     print("Use Tab to autocomplete paths. Leave the format blank to use the default.")
+    print("Playlists are read from the destination music folder's playlists subfolder.")
     print()
 
     try:
         source_dir = prompt_path("Source music folder: ", path_completer, prompt)
         destination_dir = prompt_path("Destination music folder: ", path_completer, prompt)
-        playlist_source_dir = prompt_path("Source playlist folder: ", path_completer, prompt)
-        playlist_destination_dir = prompt_path("Destination playlist folder: ", path_completer, prompt)
         format_string = prompt_text(
             "Organisation format: ",
             prompt,
@@ -48,14 +47,10 @@ def run_tui() -> int:
 
     source_dir = source_dir.expanduser().resolve()
     destination_dir = destination_dir.expanduser().resolve()
-    playlist_source_dir = playlist_source_dir.expanduser().resolve()
-    playlist_destination_dir = playlist_destination_dir.expanduser().resolve()
 
     validation_error = validate_paths(
         source_dir,
         destination_dir,
-        playlist_source_dir,
-        playlist_destination_dir,
     )
     if validation_error:
         print(validation_error, file=sys.stderr)
@@ -66,8 +61,6 @@ def run_tui() -> int:
     return run_organise(
         source_dir,
         destination_dir,
-        playlist_source_dir,
-        playlist_destination_dir,
         format_string,
         apply=apply_changes,
     )

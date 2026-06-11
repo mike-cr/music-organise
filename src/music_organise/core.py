@@ -432,16 +432,14 @@ def planned_path_map(plans: list[MovePlan]) -> dict[Path, Path]:
 
 
 def update_xspf_playlists(
-    playlist_source_root: Path,
-    playlist_destination_root: Path,
+    playlist_root: Path,
     path_map: Mapping[Path, Path],
     apply: bool,
 ) -> list[PlaylistUpdate]:
     updates: list[PlaylistUpdate] = []
-    for playlist in sorted(playlist_source_root.rglob("*.xspf")):
-        destination = playlist_destination_root / playlist.relative_to(playlist_source_root)
-        changes = update_xspf_playlist(playlist, destination, path_map, apply)
-        updates.append(PlaylistUpdate(source=playlist, destination=destination, changes=changes))
+    for playlist in sorted(playlist_root.rglob("*.xspf")):
+        changes = update_xspf_playlist(playlist, playlist, path_map, apply)
+        updates.append(PlaylistUpdate(source=playlist, destination=playlist, changes=changes))
     return updates
 
 
@@ -462,11 +460,11 @@ def update_xspf_playlist(
         parsed = parse_playlist_location(location.text, source_playlist.parent)
         if parsed is None:
             continue
-        original_path, style = parsed
+        original_path, _style = parsed
         replacement = path_map.get(original_path.resolve())
         if replacement is None:
             continue
-        location.text = format_playlist_location(replacement, destination_playlist.parent, style)
+        location.text = format_playlist_location(replacement, destination_playlist.parent, "relative_path")
         changes += 1
 
     if apply:

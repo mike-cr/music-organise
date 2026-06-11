@@ -16,33 +16,33 @@ def test_main_rejects_partial_positional_args(capsys):
     result = main([str(Path("/tmp/music"))])
 
     assert result == 2
-    assert "source_dir, destination_dir" in capsys.readouterr().err
+    assert "source_dir and destination_dir" in capsys.readouterr().err
 
 
-def test_validate_paths_allows_playlist_destination_to_match_source(tmp_path):
+def test_validate_paths_requires_playlist_folder_under_destination(tmp_path):
     source = tmp_path / "source"
     destination = tmp_path / "destination"
-    playlists = tmp_path / "playlists"
     source.mkdir()
-    playlists.mkdir()
+    destination.mkdir()
 
-    assert validate_paths(source, destination, playlists, playlists) is None
+    assert validate_paths(source, destination) == f"playlist directory does not exist: {destination / 'playlists'}"
 
 
 def test_validate_paths_allows_music_destination_to_match_source(tmp_path):
     source = tmp_path / "source"
-    playlists = tmp_path / "playlists"
+    playlists = source / "playlists"
     source.mkdir()
     playlists.mkdir()
 
-    assert validate_paths(source, source, playlists, playlists) is None
+    assert validate_paths(source, source) is None
 
 
 def test_run_organise_moves_music_when_destination_differs(tmp_path, monkeypatch):
     source = tmp_path / "source"
     destination = tmp_path / "destination"
-    playlists = tmp_path / "playlists"
     source.mkdir()
+    destination.mkdir()
+    playlists = destination / "playlists"
     playlists.mkdir()
     track = source / "track.mp3"
     target = destination / "track.mp3"
@@ -60,5 +60,5 @@ def test_run_organise_moves_music_when_destination_differs(tmp_path, monkeypatch
     monkeypatch.setattr("music_organise.cli.apply_moves", fake_apply_moves)
     monkeypatch.setattr("music_organise.cli.update_xspf_playlists", lambda *args, **kwargs: [])
 
-    assert run_organise(source, destination, playlists, playlists, "{title}{ext}", apply=True) == 0
+    assert run_organise(source, destination, "{title}{ext}", apply=True) == 0
     assert move_args == [True]

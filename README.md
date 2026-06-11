@@ -1,9 +1,8 @@
 # music-organise
 
 Move MP3 and FLAC files from a source folder into a destination folder using
-their tags, then copy XSPF playlists into a destination folder with updated
-`<location>` entries. Source playlist files are left in place unless you choose
-to update playlists in place.
+their tags, then update XSPF playlists in `<destination music directory>/playlists`
+with relative `<location>` entries.
 
 If the music source and destination are the same folder, files are moved within
 that folder and empty folders are cleaned up after apply mode. Empty folders are
@@ -47,9 +46,7 @@ default.
 ```bash
 music-organise \
   /path/to/source-music \
-  /path/to/destination-library \
-  /path/to/source-playlists \
-  /path/to/destination-playlists
+  /path/to/destination-library
 ```
 
 Apply the changes:
@@ -58,8 +55,6 @@ Apply the changes:
 music-organise \
   /path/to/source-music \
   /path/to/destination-library \
-  /path/to/source-playlists \
-  /path/to/destination-playlists \
   --apply
 ```
 
@@ -75,9 +70,7 @@ Or run the non-interactive command without installing:
 ```bash
 PYTHONPATH=src python3 -m music_organise.cli \
   /path/to/source-music \
-  /path/to/destination-library \
-  /path/to/source-playlists \
-  /path/to/destination-playlists
+  /path/to/destination-library
 ```
 
 Available format fields:
@@ -99,12 +92,10 @@ The default format is:
 {artist}/{year} - {album}{disc_suffix}/{track:02d} - {title}{ext}
 ```
 
-Playlist files are copied to the playlist destination folder, preserving their
-relative folder structure. Locations are updated when they reference an organised
-audio file as an absolute path, a `file://` URI, or a relative path from the
-original playlist file. Updated relative paths are written relative to the
-copied playlist's new location. Set the playlist source and destination to the
-same folder to update playlists in place.
+Playlist files are assumed to live under `<destination music directory>/playlists`.
+Locations are updated when they reference an organised audio file as an absolute
+path, a `file://` URI, or a relative path from the playlist file. Updated paths
+are always written relative to the playlist file.
 
 The app refuses to process a source folder when any track in that folder is
 missing a date tag, or when tracks in that folder have different artists or
