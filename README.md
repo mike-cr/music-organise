@@ -17,6 +17,16 @@ The command runs in dry-run mode unless `--apply` is supplied.
 python3 -m pip install -e .
 ```
 
+On Arch Linux, install through the package manager from the local `PKGBUILD`
+without building inside the repo:
+
+```bash
+scripts/install-arch-package.sh
+```
+
+The script copies `PKGBUILD` into a temporary directory and runs `yay -Bi .` if
+`yay` is installed, otherwise `makepkg -si`.
+
 ## Usage
 
 Start the interactive TUI:
