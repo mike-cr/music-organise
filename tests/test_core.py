@@ -301,6 +301,43 @@ def test_update_xspf_playlist_rewrites_absolute_locations_as_relative(tmp_path: 
     assert location.text == "../Artist/Album/01%20-%20New.mp3"
 
 
+def test_update_xspf_playlist_matches_locations_with_different_apostrophe_style(tmp_path: Path):
+    music = tmp_path / "music"
+    playlists = tmp_path / "music" / "playlists"
+    music.mkdir()
+    playlists.mkdir()
+    old_path = music / "Good lovin' Outside.mp3"
+    new_path = music / "Artist" / "Album" / "11 - Good lovin' Outside.mp3"
+    old_path.write_bytes(b"")
+
+    playlist = playlists / "mix.xspf"
+    playlist.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<playlist version="1" xmlns="http://xspf.org/ns/0/">
+  <trackList>
+    <track>
+      <location>../Good%20lovin%E2%80%99%20Outside.mp3</location>
+    </track>
+  </trackList>
+</playlist>
+""",
+        encoding="utf-8",
+    )
+
+    changes = update_xspf_playlist(
+        playlist,
+        playlist,
+        {old_path.resolve(): new_path.resolve()},
+        apply=True,
+    )
+
+    assert changes == 1
+    tree = ET.parse(playlist)
+    location = tree.getroot().find(".//{http://xspf.org/ns/0/}location")
+    assert location is not None
+    assert location.text == "../Artist/Album/11%20-%20Good%20lovin'%20Outside.mp3"
+
+
 def test_update_xspf_playlists_updates_nested_playlists_in_place_with_relative_paths(tmp_path: Path):
     music_source = tmp_path / "source-music"
     music_destination = tmp_path / "library"

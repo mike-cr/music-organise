@@ -95,7 +95,8 @@ The default format is:
 Playlist files are assumed to live under `<destination music directory>/playlists`.
 Locations are updated when they reference an organised audio file as an absolute
 path, a `file://` URI, or a relative path from the playlist file. Updated paths
-are always written relative to the playlist file.
+are always written relative to the playlist file. Playlist matching tolerates
+common apostrophe variants, such as straight `'` versus curly `’`.
 
 The app refuses to process a source folder when any track in that folder is
 missing a date tag, or when tracks in that folder have different artists or

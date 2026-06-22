@@ -18,6 +18,18 @@ _BAD_FILENAME_CHARS = re.compile(r'[<>:"\\|?*\x00-\x1f]')
 _MULTI_SPACE = re.compile(r"\s+")
 DATE_TAG_KEYS = ("date", "originaldate", "year", "originalyear", "releasedate", "releaseyear")
 RAW_MP3_DATE_FRAME_KEYS = ("TDRC", "TDRL", "TYER", "TDOR")
+APOSTROPHE_TRANSLATION = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201a": "'",
+        "\u201b": "'",
+        "\u02bc": "'",
+        "\uff07": "'",
+        "\u00b4": "'",
+        "`": "'",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -453,6 +465,7 @@ def update_xspf_playlist(
     tree = ET.parse(source_playlist)
     root = tree.getroot()
     changes = 0
+    normalized_path_map = build_normalized_path_map(path_map)
 
     for location in root.findall(f".//{{{XSPF_NS}}}location") + root.findall(".//location"):
         if not location.text:
@@ -462,6 +475,8 @@ def update_xspf_playlist(
             continue
         original_path, _style = parsed
         replacement = path_map.get(original_path.resolve())
+        if replacement is None:
+            replacement = normalized_path_map.get(normalized_path_key(original_path))
         if replacement is None:
             continue
         location.text = format_playlist_location(replacement, destination_playlist.parent, "relative_path")
@@ -475,6 +490,21 @@ def update_xspf_playlist(
             shutil.copy2(source_playlist, destination_playlist)
 
     return changes
+
+
+def build_normalized_path_map(path_map: Mapping[Path, Path]) -> dict[str, Path]:
+    normalized: dict[str, Path | None] = {}
+    for source, destination in path_map.items():
+        key = normalized_path_key(source)
+        if key in normalized and normalized[key] != destination:
+            normalized[key] = None
+        else:
+            normalized[key] = destination
+    return {key: value for key, value in normalized.items() if value is not None}
+
+
+def normalized_path_key(path: Path) -> str:
+    return str(path.resolve()).translate(APOSTROPHE_TRANSLATION)
 
 
 def parse_playlist_location(value: str, base_dir: Path) -> tuple[Path, str] | None:
